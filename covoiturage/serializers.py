@@ -1,7 +1,7 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
-from .models import Utilisateur
+from .models import Utilisateur, Trajet
 
 
 class InscriptionSerializer(serializers.ModelSerializer):
@@ -48,4 +48,38 @@ class UtilisateurSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'first_name', 'last_name', 'date_naissance', 'telephone',
             'identifiant', 'email', 'est_personnel', 'photo', 'note',
-        ]        
+        ]       
+
+
+
+
+from datetime import date
+
+
+class TrajetSerializer(serializers.ModelSerializer):
+    # Le chauffeur est rempli par le serveur, l'appli ne l'envoie pas.
+    # On affiche ses infos en lecture seule.
+    chauffeur = UtilisateurSerializer(read_only=True)
+
+    class Meta:
+        model = Trajet
+        fields = [
+            'id', 'chauffeur', 'depart', 'depart_lat', 'depart_lng',
+            'arrivee', 'arrivee_lat', 'arrivee_lng', 'date_depart',
+            'heure_depart', 'prix_par_place', 'places_dispo',
+            'statut', 'cree_le',
+        ]
+        # Ces champs ne peuvent pas être modifiés par l'appli
+        read_only_fields = ['statut', 'cree_le']
+
+    def validate_date_depart(self, value):
+        # Refuse un trajet dans le passé
+        if value < date.today():
+            raise serializers.ValidationError("La date est déjà passée.")
+        return value
+
+    def validate_places_dispo(self, value):
+        # Il faut proposer au moins une place
+        if value < 1:
+            raise serializers.ValidationError("Proposez au moins une place.")
+        return value 
