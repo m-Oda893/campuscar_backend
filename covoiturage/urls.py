@@ -1,7 +1,7 @@
 from django.urls import path
 
 from .views import (
-    ConnexionView, DeconnexionView, InscriptionView, NotificationLueView, NotificationsListeView, NotificationsNonLuesView, NotificationsToutLireView, ProfilChauffeurView, ProfilView, ReservationNoterView, TrajetAnnulerView,
+    ConnexionView, DeconnexionView, InscriptionView, NotificationLueView, NotificationsListeView, NotificationsNonLuesView, NotificationsToutLireView, ProfilChauffeurView, ProfilView, ReservationNoterView, SignalementCreerView, TrajetAnnulerView,
     TrajetCreerView, TrajetModifierView, TrajetRechercheView, MesTrajetsView,
     ReservationCreerView, MesReservationsView, ReservationsRecuesView,
     ReservationValiderView, ReservationRefuserView, ReservationAnnulerView, TrajetTerminerView,
@@ -32,5 +32,6 @@ urlpatterns = [
     path('notifications/non-lues/', NotificationsNonLuesView.as_view()),
     path('notifications/tout-lire/', NotificationsToutLireView.as_view()), 
     path('notifications/<int:pk>/lue/', NotificationLueView.as_view()),
+    path('signalements/', SignalementCreerView.as_view()),
     
 ]

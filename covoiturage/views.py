@@ -9,9 +9,9 @@ from django.shortcuts import get_object_or_404
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 
-from .models import Utilisateur, Trajet , Reservation , Voiture , Notification
+from .models import Utilisateur, Trajet , Reservation , Voiture , Notification , Signalement
 from .serializers import InscriptionSerializer, ReservationSerializer, UtilisateurSerializer, TrajetSerializer , VoitureSerializer
-from .serializers import InscriptionSerializer, UtilisateurSerializer , NotificationSerializer
+from .serializers import InscriptionSerializer, UtilisateurSerializer , NotificationSerializer , SignalementSerializer
 from .serializers import ReservationSerializer
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -512,3 +512,41 @@ class NotificationsToutLireView(APIView):
     def post(self, request):
         Notification.objects.filter(destinataire=request.user, lue=False).update(lue=True)
         return Response(status=204)
+
+
+    
+
+
+#SIGNALEMENT
+class SignalementCreerView(APIView):
+    """Signaler l'autre personne d'une réservation confirmée."""
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        serializer = SignalementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        reservation = serializer.validated_data['reservation']
+        trajet = reservation.trajet
+        user = request.user
+
+        # Le serveur décide qui est signalé : l'appli ne l'envoie jamais
+        if user == reservation.passager:
+            cible = trajet.chauffeur
+        elif user == trajet.chauffeur:
+            cible = reservation.passager
+        else:
+            return Response({'detail': "Action non autorisée."}, status=403)
+
+        if reservation.statut != 'confirmee':
+            return Response(
+                {'detail': "Tu ne peux signaler qu'une personne avec qui tu as une réservation confirmée."},
+                status=400,
+            )
+        if Signalement.objects.filter(auteur=user, reservation=reservation).exists():
+            return Response(
+                {'detail': "Tu as déjà signalé cette personne pour cette réservation."},
+                status=400,
+            )
+        serializer.save(auteur=user, cible=cible)
+        return Response(serializer.data, status=201)

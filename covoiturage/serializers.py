@@ -1,7 +1,7 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
-from .models import Notification, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture
+from .models import Notification, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture, Signalement
 from datetime import date
 from .matching import trouver_zone 
 
@@ -267,3 +267,12 @@ class NotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = Notification
         fields = ['id', 'type', 'message', 'lue', 'cree_le']
+
+
+
+#SIGNALEMENT
+class SignalementSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Signalement
+        fields = ['id', 'reservation', 'motif', 'description', 'statut', 'cree_le']
+        read_only_fields = ['statut', 'cree_le']

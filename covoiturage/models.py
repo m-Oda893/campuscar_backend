@@ -355,3 +355,44 @@ class Zone(models.Model):
     def mots_cles(self):
         mots = [self.nom] + self.alias.split(',')
         return [m.strip() for m in mots if m.strip()]
+
+
+
+
+
+#SIGNALEMENT
+class Signalement(models.Model):
+    MOTIFS = [
+        ('comportement', 'Comportement inapproprié'),
+        ('absence', 'Absent au rendez-vous'),
+        ('annulation', 'Annulation de dernière minute'),
+        ('conduite', 'Conduite dangereuse'),
+        ('fraude', 'Faux profil ou fraude'),
+        ('autre', 'Autre'),
+    ]
+    STATUTS = [
+        ('nouveau', 'Nouveau'),
+        ('traite', 'Traité'),
+        ('rejete', 'Rejeté'),
+    ]
+    auteur = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='signalements_faits'
+    )
+    cible = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.CASCADE,
+        related_name='signalements_recus'
+    )
+    reservation = models.ForeignKey(
+        Reservation, on_delete=models.CASCADE, related_name='signalements'
+    )
+    motif = models.CharField(max_length=20, choices=MOTIFS)
+    description = models.TextField(blank=True)
+    statut = models.CharField(max_length=10, choices=STATUTS, default='nouveau')
+    cree_le = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-cree_le']
+
+    def __str__(self):
+        return f"{self.auteur} signale {self.cible} ({self.motif})"
