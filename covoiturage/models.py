@@ -335,3 +335,23 @@ class Notification(models.Model):
 
     def __str__(self):
         return f"{self.type} pour {self.destinataire}"
+
+
+
+
+
+#ZONE
+class Zone(models.Model):
+    """Un lieu connu de la communauté : le serveur en déduit les coordonnées d'un trajet."""
+    nom = models.CharField(max_length=100, unique=True)
+    # Autres écritures possibles, séparées par des virgules
+    alias = models.CharField(max_length=300, blank=True)
+    latitude = models.FloatField()
+    longitude = models.FloatField()
+
+    def __str__(self):
+        return self.nom
+
+    def mots_cles(self):
+        mots = [self.nom] + self.alias.split(',')
+        return [m.strip() for m in mots if m.strip()]

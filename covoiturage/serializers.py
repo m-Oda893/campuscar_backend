@@ -3,6 +3,9 @@ from rest_framework import serializers
 
 from .models import Notification, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture
 from datetime import date
+from .matching import trouver_zone 
+
+
 
 class InscriptionSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField()
@@ -166,6 +169,24 @@ class TrajetSerializer(serializers.ModelSerializer):
                     {'places_dispo': f"Cette voiture a {voiture.nbre_place} place(s) passager au maximum."}
                 )
         return data
+
+
+    def _remplir_coordonnees(self, donnees):
+        # Le serveur déduit lat/lng du texte saisi, grâce aux zones connues
+        for cote in ('depart', 'arrivee'):
+            if cote in donnees:
+                zone = trouver_zone(donnees[cote])
+                donnees[f'{cote}_lat'] = zone.latitude if zone else None
+                donnees[f'{cote}_lng'] = zone.longitude if zone else None
+
+    def create(self, validated_data):
+        self._remplir_coordonnees(validated_data)
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # À la modification, on ne recalcule que ce qui a changé
+        self._remplir_coordonnees(validated_data)
+        return super().update(instance, validated_data)
 
     
 

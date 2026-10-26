@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Utilisateur, Trajet, Reservation, Voiture, ProfilChauffeur
+from .models import Utilisateur, Trajet, Reservation, Voiture, ProfilChauffeur , Zone
 
 admin.site.register(Trajet)
 admin.site.register(Reservation)
@@ -34,3 +34,9 @@ class UtilisateurAdmin(UserAdmin):
 class ProfilChauffeurAdmin(admin.ModelAdmin):
     list_display = ('utilisateur', 'numero_permis', 'verifie', 'cree_le')
     list_editable = ('verifie',)   # on coche directement dans la liste
+
+
+
+@admin.register(Zone)
+class ZoneAdmin(admin.ModelAdmin):
+    list_display = ('nom', 'latitude', 'longitude')

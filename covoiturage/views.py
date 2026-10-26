@@ -17,6 +17,8 @@ from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser
 from .models import ProfilChauffeur
 from .serializers import ProfilChauffeurSerializer
+from .matching import evaluer, parser_heure, trouver_zone
+from .models import Zone
 
 
 
@@ -105,7 +107,7 @@ class TrajetCreerView(generics.CreateAPIView):
 
 
 class TrajetRechercheView(generics.ListAPIView):
-    """Le passager cherche des trajets (filtres facultatifs)."""
+    """Le passager cherche des trajets : fenêtre horaire + proximité géographique."""
     serializer_class = TrajetSerializer
     authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
@@ -113,29 +115,52 @@ class TrajetRechercheView(generics.ListAPIView):
     def get_queryset(self):
         maintenant = timezone.localtime()
         trajets = Trajet.objects.filter(
-            statut='ouvert',
-            places_dispo__gt=0,
+            statut='ouvert', places_dispo__gt=0,
         ).filter(
             # un jour futur, OU aujourd'hui avec une heure pas encore passée
             Q(date_depart__gt=maintenant.date()) |
             Q(date_depart=maintenant.date(), heure_depart__gt=maintenant.time())
-        ).exclude(chauffeur=self.request.user)
-         
-        
+        ).exclude(chauffeur=self.request.user).select_related('chauffeur', 'voiture')
 
-        # Filtres lus dans l'adresse : /trajets/recherche/?depart=ucad&arrivee=pikine&date=2026-10-20
-        depart = self.request.query_params.get('depart')
-        arrivee = self.request.query_params.get('arrivee')
         jour = self.request.query_params.get('date')
-
-        if depart:
-            trajets = trajets.filter(depart__icontains=depart)   # contient ce texte
-        if arrivee:
-            trajets = trajets.filter(arrivee__icontains=arrivee)
         if jour:
             trajets = trajets.filter(date_depart=jour)
-
         return trajets.order_by('date_depart', 'heure_depart')
+
+    def list(self, request, *args, **kwargs):
+        depart = (request.query_params.get('depart') or '').strip()
+        arrivee = (request.query_params.get('arrivee') or '').strip()
+        heure = parser_heure(request.query_params.get('heure'))
+
+        # On traduit ce que le passager a tapé en zones connues (ou None)
+        zones = list(Zone.objects.all())
+        zone_dep = trouver_zone(depart, zones)
+        zone_arr = trouver_zone(arrivee, zones)
+
+        retenus = []
+        for trajet in self.get_queryset():
+            info = evaluer(trajet, depart, arrivee, zone_dep, zone_arr, heure)
+            if info is not None:
+                retenus.append((trajet, info))
+
+        # Avec un critère : meilleur score d'abord (le tri garde l'ordre
+        # chronologique en cas d'égalité). Sans critère : ordre chronologique.
+        if depart or arrivee or heure is not None:
+            retenus.sort(key=lambda x: x[1]['score'])
+
+        resultat = []
+        for trajet, info in retenus:
+            ligne = dict(TrajetSerializer(
+                trajet, context=self.get_serializer_context()
+            ).data)
+            ligne['match'] = {
+                'km': info['km'],
+                'ecart_minutes': info['ecart_minutes'],
+                'geo': info['geo'],
+            }
+            resultat.append(ligne)
+        return Response(resultat)
+    
 
 
 class MesTrajetsView(generics.ListAPIView):
