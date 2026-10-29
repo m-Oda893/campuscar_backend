@@ -147,3 +147,11 @@ MAILERS = {
 
 
 AUTH_USER_MODEL = 'covoiturage.Utilisateur'
+
+PRIX_MIN_PAR_PLACE = 500
+PRIX_MAX_PAR_PLACE = 1500
+
+
+# Annulation tardive : délai (en heures avant le départ) et seuil de suspension
+DELAI_ANNULATION_TARDIVE_HEURES = 2
+SEUIL_SUSPENSION_ANNULATIONS = 3

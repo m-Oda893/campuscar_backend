@@ -5,6 +5,10 @@ from django.db import models, transaction
 from django.db.models import Avg
 from django.conf import settings
 from django.utils import timezone
+from datetime import datetime, timedelta
+from django.db.models import Avg, F
+
+
 
 #UTILISATEUR
 class Utilisateur(AbstractUser):
@@ -15,6 +19,11 @@ class Utilisateur(AbstractUser):
     identifiant = models.CharField(max_length=50, unique=True, null=True, blank=True)
     photo = models.ImageField(upload_to='photos/', null=True, blank=True)
     note = models.FloatField(default=0)
+    annulations_tardives = models.PositiveSmallIntegerField(default=0)
+
+    @property
+    def est_suspendu(self):
+        return self.annulations_tardives >= settings.SEUIL_SUSPENSION_ANNULATIONS
 
     def __str__(self):
         return self.get_full_name() or self.username
@@ -125,6 +134,18 @@ class Trajet(models.Model):
             moment = timezone.make_aware(moment)
         return timezone.now() >= moment
 
+
+    def moment_depart(self):
+        moment = datetime.combine(self.date_depart, self.heure_depart)
+        if timezone.is_naive(moment) and settings.USE_TZ:
+            moment = timezone.make_aware(moment)
+        return moment
+
+    def annulation_tardive(self):
+        """Vrai si on est à moins de X heures du départ (ou après)."""
+        delai = timedelta(hours=settings.DELAI_ANNULATION_TARDIVE_HEURES)
+        return timezone.now() >= self.moment_depart() - delai
+
     
     
     # Opérations du diagramme
@@ -132,22 +153,35 @@ class Trajet(models.Model):
         """Le chauffeur annule son trajet : les demandes en cours sont annulées aussi."""
         if self.statut in ('annule', 'termine'):
             raise ValueError("Ce trajet est déjà terminé ou annulé.")
+        heures = settings.DELAI_ANNULATION_TARDIVE_HEURES
         with transaction.atomic():
-            # On garde les passagers concernés AVANT de changer les statuts
             concernees = list(self.reservations.filter(
                 statut__in=['en_attente', 'confirmee']
             ).select_related('passager'))
+            # Tardive : proche du départ ET au moins un passager déjà confirmé
+            tardive = self.annulation_tardive() and any(
+                r.statut == 'confirmee' for r in concernees
+            )
             self.reservations.filter(
                 statut__in=['en_attente', 'confirmee']
             ).update(statut='annulee')
             self.statut = 'annule'
             self.save()
-            Notification.objects.bulk_create([
-                Notification(
-                    destinataire=r.passager, type='trajet_annule',
-                    message=f"Le chauffeur a annulé le trajet {self.libelle()}.",
-                ) for r in concernees
-            ])
+            if tardive:
+                Utilisateur.objects.filter(pk=self.chauffeur_id).update(
+                    annulations_tardives=F('annulations_tardives') + 1
+                )
+            notifications = []
+            for r in concernees:
+                if tardive and r.statut == 'confirmee':
+                    texte = (f"Annulation tardive du chauffeur : le trajet "
+                             f"{self.libelle()} a été annulé à moins de {heures} h du départ.")
+                else:
+                    texte = f"Le chauffeur a annulé le trajet {self.libelle()}."
+                notifications.append(Notification(
+                    destinataire=r.passager, type='trajet_annule', message=texte,
+                ))
+            Notification.objects.bulk_create(notifications)
 
     def terminer(self):
         """Le chauffeur termine son trajet (possible seulement après l'heure de départ)."""
@@ -242,24 +276,35 @@ class Reservation(models.Model):
         # On recharge cet objet pour que la vue renvoie les valeurs à jour
         self.refresh_from_db()
 
+
     def annuler(self):
         """Le passager annule sa réservation."""
         if self.statut in ('annulee', 'refusee'):
             raise ValueError("Cette réservation est déjà terminée.")
         if self.trajet.statut == 'termine':
             raise ValueError("Ce trajet est terminé, tu ne peux plus annuler.")
+        # Tardive : réservation déjà confirmée ET départ proche (à calculer AVANT de changer le statut)
+        tardive = self.statut == 'confirmee' and self.trajet.annulation_tardive()
+        heures = settings.DELAI_ANNULATION_TARDIVE_HEURES
         with transaction.atomic():
-            # Si elle était confirmée, la place est libérée
             if self.statut == 'confirmee':
                 self.trajet.places_dispo += 1
                 if self.trajet.statut == 'complet':
-                    self.trajet.statut = 'ouvert'   # une place s'est libérée
+                    self.trajet.statut = 'ouvert'
                 self.trajet.save()
             self.statut = 'annulee'
             self.save()
+            if tardive:
+                Utilisateur.objects.filter(pk=self.passager_id).update(
+                    annulations_tardives=F('annulations_tardives') + 1
+                )
+                texte = (f"Annulation tardive : {self.passager.first_name} a annulé sa "
+                         f"réservation pour {self.trajet.libelle()} à moins de {heures} h du départ.")
+            else:
+                texte = f"{self.passager.first_name} a annulé sa réservation pour {self.trajet.libelle()}."
             Notification.objects.create(
                 destinataire=self.trajet.chauffeur, type='reservation_annulee',
-                message=f"{self.passager.first_name} a annulé sa réservation pour {self.trajet.libelle()}.",
+                message=texte,
             )
 
 

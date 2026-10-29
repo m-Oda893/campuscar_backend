@@ -4,7 +4,7 @@ from rest_framework import serializers
 from .models import Notification, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture, Signalement
 from datetime import date
 from .matching import trouver_zone 
-
+from django.conf import settings
 
 
 class InscriptionSerializer(serializers.ModelSerializer):
@@ -46,19 +46,41 @@ class InscriptionSerializer(serializers.ModelSerializer):
 
 #UTILISATEUR
 class UtilisateurSerializer(serializers.ModelSerializer):
+    suspendu = serializers.BooleanField(source='est_suspendu', read_only=True)
+
     class Meta:
         model = Utilisateur
         fields = [
             'id', 'first_name', 'last_name', 'date_naissance', 'telephone',
             'identifiant', 'email', 'est_personnel', 'photo', 'note',
-        ]       
+            'annulations_tardives', 'suspendu',
+        ]
+        read_only_fields = ['annulations_tardives']
 
 
 class UtilisateurPublicSerializer(serializers.ModelSerializer):
-    # Seulement ce que les AUTRES utilisateurs peuvent voir
     class Meta:
         model = Utilisateur
-        fields = ['id', 'first_name', 'last_name', 'photo', 'note']
+        fields = ['id', 'first_name', 'last_name', 'photo', 'note', 'annulations_tardives']
+
+
+
+class ProfilModificationSerializer(serializers.ModelSerializer):
+    # Déclarés ici pour interdire un prénom ou un nom vide
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+
+    class Meta:
+        model = Utilisateur
+        # Seuls ces champs peuvent changer : tout autre champ envoyé est ignoré
+        fields = ['first_name', 'last_name', 'telephone', 'photo']
+
+    def validate_telephone(self, value):
+        chiffres = ''.join(c for c in value if c.isdigit())
+        if len(chiffres) < 9:
+            raise serializers.ValidationError("Numéro de téléphone invalide.")
+        return value
+    
 
 
 
@@ -149,6 +171,18 @@ class TrajetSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("Proposez au moins une place.")
         return value 
 
+
+    def validate_prix_par_place(self, value):
+        mini = settings.PRIX_MIN_PAR_PLACE
+        maxi = settings.PRIX_MAX_PAR_PLACE
+        if value < mini or value > maxi:
+            raise serializers.ValidationError(
+               f"Le prix par place doit être compris entre {mini} et {maxi} FCFA."
+        )
+        return value
+        
+
+
     def validate(self, data):
         request = self.context['request']
         # À la modification, un champ absent = on garde la valeur actuelle
@@ -169,6 +203,9 @@ class TrajetSerializer(serializers.ModelSerializer):
                     {'places_dispo': f"Cette voiture a {voiture.nbre_place} place(s) passager au maximum."}
                 )
         return data
+
+
+    
 
 
     def _remplir_coordonnees(self, donnees):

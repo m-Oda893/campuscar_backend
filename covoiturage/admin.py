@@ -9,6 +9,9 @@ admin.site.register(Reservation)
 admin.site.register(Voiture)
 
 
+fieldsets = UserAdmin.fieldsets + (
+    ('CampusCar', {'fields': ('annulations_tardives',)}),
+)
 
 @admin.register(Utilisateur)
 class UtilisateurAdmin(UserAdmin):

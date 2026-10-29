@@ -8,10 +8,11 @@ from rest_framework.authentication import TokenAuthentication
 from django.shortcuts import get_object_or_404
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
+from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 
 from .models import Utilisateur, Trajet , Reservation , Voiture , Notification , Signalement
 from .serializers import InscriptionSerializer, ReservationSerializer, UtilisateurSerializer, TrajetSerializer , VoitureSerializer
-from .serializers import InscriptionSerializer, UtilisateurSerializer , NotificationSerializer , SignalementSerializer
+from .serializers import InscriptionSerializer, UtilisateurSerializer , NotificationSerializer , SignalementSerializer , ProfilModificationSerializer
 from .serializers import ReservationSerializer
 from rest_framework.exceptions import PermissionDenied
 from rest_framework.parsers import MultiPartParser, FormParser
@@ -21,6 +22,7 @@ from .matching import evaluer, parser_heure, trouver_zone
 from .models import Zone
 
 
+MESSAGE_SUSPENSION = "Ton compte est suspendu après des annulations tardives répétées."
 
 #VUE UTILISATEUR(INSCRIPTION, CONNEXION)
 class InscriptionView(generics.CreateAPIView):
@@ -83,6 +85,8 @@ class VoitureListeCreerView(generics.ListCreateAPIView):
         return Voiture.objects.filter(proprietaire=self.request.user)
 
     def perform_create(self, serializer):
+        if self.request.user.est_suspendu:
+            raise PermissionDenied(MESSAGE_SUSPENSION)
         if not self.request.user.est_chauffeur_verifie:
             raise PermissionDenied("Ton permis doit être vérifié avant d'ajouter une voiture.")
         # Le propriétaire est l'utilisateur connecté, l'appli ne l'envoie pas
@@ -248,6 +252,8 @@ class ReservationCreerView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+        if request.user.est_suspendu:
+            return Response({'detail': MESSAGE_SUSPENSION}, status=403)
         trajet_id = request.data.get('trajet')
         if not trajet_id:
             return Response({'detail': "Trajet manquant."}, status=400)
@@ -392,45 +398,59 @@ class ReservationNoterView(APIView):
 
 
 #PROFIL
-class ProfilView(generics.RetrieveAPIView):
-    """Renvoie le profil complet de la personne CONNECTÉE, et de personne d'autre."""
-    serializer_class = UtilisateurSerializer
+
+class ProfilView(generics.RetrieveUpdateAPIView):
+    """GET : mon profil complet. PATCH : je modifie prénom, nom, téléphone, photo."""
     authentication_classes = [TokenAuthentication]
     permission_classes = [permissions.IsAuthenticated]
+    # La photo arrive en multipart, le reste peut arriver en JSON
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+    # PUT désactivé : on ne modifie que par PATCH
+    http_method_names = ['get', 'patch', 'head', 'options']
+
+    def get_serializer_class(self):
+        if self.request.method == 'PATCH':
+            return ProfilModificationSerializer
+        return UtilisateurSerializer
 
     def get_object(self):
-        # Pas d'id dans l'URL : on prend toujours l'utilisateur du token.
-        # Impossible donc de lire le profil d'un autre en changeant un numéro.
         return self.request.user
 
-    def retrieve(self, request, *args, **kwargs):
-        user = self.get_object()
+    def _donnees_profil(self, user):
+        # Le profil complet + les rôles, utilisé par GET et par PATCH
+        data = dict(UtilisateurSerializer(
+            user, context=self.get_serializer_context()
+        ).data)
 
-        # get_serializer() donne au serializer la requête (le "context"),
-        # ce qui permet à Django de renvoyer l'URL complète de la photo
-        data = dict(self.get_serializer(user).data)
-
-        # Rôles déduits de ce que la personne a réellement fait
         est_chauffeur = (
             Voiture.objects.filter(proprietaire=user).exists()
             or Trajet.objects.filter(chauffeur=user).exists()
         )
-        # Passager si elle a déjà réservé, ou par défaut si elle n'est pas chauffeur
         est_passager = (
             Reservation.objects.filter(passager=user).exists()
             or not est_chauffeur
         )
-
         roles = []
         if est_passager:
             roles.append('passager')
         if est_chauffeur:
             roles.append('chauffeur')
         data['roles'] = roles
+        return data
 
-        return Response(data)
+    def retrieve(self, request, *args, **kwargs):
+        return Response(self._donnees_profil(self.get_object()))
 
+    def partial_update(self, request, *args, **kwargs):
+        user = self.get_object()
+        serializer = self.get_serializer(user, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        # On renvoie le profil complet à jour : l'appli n'a rien à recalculer
+        return Response(self._donnees_profil(user))
     
+
+
 
 #PERMIS
 class ProfilChauffeurView(APIView):
