@@ -1,10 +1,12 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
-from .models import Notification, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture, Signalement
+from .models import Notification, Paiement, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture, Signalement
 from datetime import date
 from .matching import trouver_zone 
 from django.conf import settings
+import re
+from .models import Reservation
 
 
 class InscriptionSerializer(serializers.ModelSerializer):
@@ -241,12 +243,13 @@ class ReservationSerializer(serializers.ModelSerializer):
     deja_notee = serializers.SerializerMethodField()
     ma_note = serializers.SerializerMethodField()
 
+
     class Meta:
         model = Reservation
         fields = [
             'id', 'trajet', 'passager', 'date_heure_reservation',
-            'statut', 'caution', 'montant', 'contact', 'matricule',
-            'peut_etre_notee', 'deja_notee', 'ma_note'
+            'statut', 'montant', 'contact', 'matricule',
+            'peut_etre_notee', 'deja_notee', 'ma_note','paye'
         ]
 
     def get_montant(self, obj):
@@ -297,6 +300,11 @@ class ReservationSerializer(serializers.ModelSerializer):
             return None
         return reservation.avis.note if hasattr(reservation, 'avis') else None
 
+    paye = serializers.SerializerMethodField()
+
+    def get_paye(self, obj):
+        return obj.paiements.filter(statut='reussi').exists()
+
 
 
 #NOTIFICATION
@@ -313,3 +321,29 @@ class SignalementSerializer(serializers.ModelSerializer):
         model = Signalement
         fields = ['id', 'reservation', 'motif', 'description', 'statut', 'cree_le']
         read_only_fields = ['statut', 'cree_le']
+
+
+
+
+#PAIEMENT 
+class PaiementSerializer(serializers.ModelSerializer):
+    # Sert à la simulation uniquement : validé, jamais stocké
+    numero = serializers.CharField(write_only=True)
+
+    class Meta:
+        model = Paiement
+        fields = ['id', 'plateforme', 'numero', 'type', 'reservation', 'montant',
+                  'statut', 'id_transaction', 'date_heure']
+        read_only_fields = ['id', 'type', 'reservation', 'montant', 'statut',
+                            'id_transaction', 'date_heure']
+    def validate_numero(self, value):
+        value = value.replace(' ', '')
+        if not re.fullmatch(r'7\d{8}', value):
+            raise serializers.ValidationError(
+                "Numéro invalide (9 chiffres commençant par 7)."
+            )
+        return value
+
+    def create(self, validated_data):
+        validated_data.pop('numero')
+        return Paiement.objects.create(**validated_data)

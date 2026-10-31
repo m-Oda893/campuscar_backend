@@ -1,7 +1,7 @@
 from django.contrib import admin
 from django.contrib.auth.admin import UserAdmin
 
-from .models import Utilisateur, Trajet, Reservation, Voiture, ProfilChauffeur , Zone
+from .models import Paiement, Utilisateur, Trajet, Reservation, Voiture, ProfilChauffeur , Zone
 from .models import Signalement
 
 admin.site.register(Trajet)
@@ -60,3 +60,11 @@ class SignalementAdmin(admin.ModelAdmin):
             s.cible.is_active = False   # compte désactivé : connexion et token refusés
             s.cible.save(update_fields=['is_active'])
         queryset.update(statut='traite')
+
+
+
+@admin.register(Paiement)
+class PaiementAdmin(admin.ModelAdmin):
+    list_display = ('id_transaction', 'utilisateur', 'montant', 'plateforme', 'statut', 'date_heure' , 'type')
+    list_filter = ('plateforme', 'statut' , 'type')
+    readonly_fields = ('id_transaction', 'date_heure')

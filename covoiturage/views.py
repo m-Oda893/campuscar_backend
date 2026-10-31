@@ -1,6 +1,7 @@
 from django.db.models import Q
 from rest_framework import generics, permissions, status
 from rest_framework.authtoken.models import Token
+from rest_framework.authentication import TokenAuthentication
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from django.utils import timezone
@@ -9,6 +10,7 @@ from django.shortcuts import get_object_or_404
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
+from django.conf import settings
 
 from .models import Utilisateur, Trajet , Reservation , Voiture , Notification , Signalement
 from .serializers import InscriptionSerializer, ReservationSerializer, UtilisateurSerializer, TrajetSerializer , VoitureSerializer
@@ -20,6 +22,10 @@ from .models import ProfilChauffeur
 from .serializers import ProfilChauffeurSerializer
 from .matching import evaluer, parser_heure, trouver_zone
 from .models import Zone
+from .models import Paiement
+from .serializers import PaiementSerializer
+from django.shortcuts import get_object_or_404
+
 
 
 MESSAGE_SUSPENSION = "Ton compte est suspendu après des annulations tardives répétées."
@@ -104,6 +110,10 @@ class TrajetCreerView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]  # refuse si pas connecté
 
     def perform_create(self, serializer):
+        def a_paye_caution(user):
+           return user.paiements.filter(statut='reussi', type='caution').exists()
+        if self.request.user.est_suspendu:
+            raise PermissionDenied(MESSAGE_SUSPENSION)
         if not self.request.user.est_chauffeur_verifie:
             raise PermissionDenied("Ton permis doit être vérifié avant de publier un trajet.")
         # Le chauffeur est l'utilisateur connecté
@@ -252,6 +262,12 @@ class ReservationCreerView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request):
+
+        if not a_paye_caution(request.user):
+          return Response(
+        {'detail': "Caution requise avant de continuer.", 'code': 'caution_requise'},
+        status=status.HTTP_403_FORBIDDEN, )
+        
         if request.user.est_suspendu:
             return Response({'detail': MESSAGE_SUSPENSION}, status=403)
         trajet_id = request.data.get('trajet')
@@ -570,3 +586,87 @@ class SignalementCreerView(APIView):
             )
         serializer.save(auteur=user, cible=cible)
         return Response(serializer.data, status=201)
+
+
+
+
+
+class ZoneListeView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        zones = Zone.objects.order_by('nom')
+        return Response([
+            {
+                'nom': z.nom,
+                'alias': [a.strip() for a in z.alias.split(',') if a.strip()],
+            }
+            for z in zones
+        ])
+
+
+    
+#PAIEMENTS
+
+def a_paye_caution(user):
+    return user.paiements.filter(statut='reussi').exists()
+
+
+class PaiementCautionView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        return Response({
+            'caution_payee': a_paye_caution(request.user),
+            'montant': settings.CAUTION_MONTANT,
+        })
+
+    def post(self, request):
+        if a_paye_caution(request.user):
+            return Response({'detail': "Caution déjà payée."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        serializer = PaiementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        paiement = serializer.save(
+            utilisateur=request.user,
+            montant=settings.CAUTION_MONTANT,
+            statut='reussi',
+        )
+        return Response(PaiementSerializer(paiement).data,
+                        status=status.HTTP_201_CREATED)
+
+
+
+class PaiementReservationView(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        reservation = get_object_or_404(Reservation, pk=pk)
+
+        if reservation.passager != request.user:
+            return Response({'detail': "Cette réservation n'est pas la tienne."},
+                            status=status.HTTP_403_FORBIDDEN)
+        if reservation.statut != 'confirmee':
+            return Response({'detail': "La réservation n'est pas confirmée."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if reservation.trajet.statut != 'termine':
+            return Response({'detail': "Le trajet n'est pas encore terminé."},
+                            status=status.HTTP_400_BAD_REQUEST)
+        if reservation.paiements.filter(statut='reussi').exists():
+            return Response({'detail': "Cette réservation est déjà payée."},
+                            status=status.HTTP_400_BAD_REQUEST)
+
+        serializer = PaiementSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        paiement = serializer.save(
+            utilisateur=request.user,
+            reservation=reservation,
+            type='trajet',
+            montant=reservation.calculer_montant(),
+            statut='reussi',
+        )
+        return Response(PaiementSerializer(paiement).data,
+                        status=status.HTTP_201_CREATED)

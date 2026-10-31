@@ -1,11 +1,11 @@
 from django.urls import path
 
 from .views import (
-    ConnexionView, DeconnexionView, InscriptionView, NotificationLueView, NotificationsListeView, NotificationsNonLuesView, NotificationsToutLireView, ProfilChauffeurView, ProfilView, ReservationNoterView, SignalementCreerView, TrajetAnnulerView,
+    ConnexionView, DeconnexionView, InscriptionView, NotificationLueView, NotificationsListeView, NotificationsNonLuesView, NotificationsToutLireView, PaiementCautionView, PaiementReservationView, ProfilChauffeurView, ProfilView, ReservationNoterView, SignalementCreerView, TrajetAnnulerView,
     TrajetCreerView, TrajetModifierView, TrajetRechercheView, MesTrajetsView,
     ReservationCreerView, MesReservationsView, ReservationsRecuesView,
     ReservationValiderView, ReservationRefuserView, ReservationAnnulerView, TrajetTerminerView,
-    VoitureListeCreerView,
+    VoitureListeCreerView, ZoneListeView,
 )
 
 urlpatterns = [
@@ -33,5 +33,7 @@ urlpatterns = [
     path('notifications/tout-lire/', NotificationsToutLireView.as_view()), 
     path('notifications/<int:pk>/lue/', NotificationLueView.as_view()),
     path('signalements/', SignalementCreerView.as_view()),
-    
+    path('zones/', ZoneListeView.as_view(), name='zones'),
+    path('paiements/caution/', PaiementCautionView.as_view(), name='paiement-caution'),
+    path('reservations/<int:pk>/payer/', PaiementReservationView.as_view(), name='paiement-reservation'),
 ]

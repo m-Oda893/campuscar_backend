@@ -7,6 +7,8 @@ from django.conf import settings
 from django.utils import timezone
 from datetime import datetime, timedelta
 from django.db.models import Avg, F
+import uuid
+from django.db import models
 
 
 
@@ -241,7 +243,7 @@ class Reservation(models.Model):
     # Attributs du diagramme
     date_heure_reservation = models.DateTimeField(auto_now_add=True)
     statut = models.CharField(max_length=20, choices=STATUTS, default='en_attente')
-    caution = models.IntegerField(default=0)
+
 
     class Meta:
         ordering = ['-date_heure_reservation']  # les plus récentes d'abord
@@ -441,3 +443,45 @@ class Signalement(models.Model):
 
     def __str__(self):
         return f"{self.auteur} signale {self.cible} ({self.motif})"
+    
+
+
+
+#PAIEMENT 
+
+def generer_id_transaction():
+    return f"SIM-{uuid.uuid4().hex[:12].upper()}"
+
+
+class Paiement(models.Model):
+    PLATEFORMES = [
+        ('wave', 'Wave (simulé)'),
+        ('orange_money', 'Orange Money (simulé)'),
+    ]
+    TYPES = [
+        ('caution', 'Caution'),
+        ('trajet', 'Trajet'),
+    ]
+    type = models.CharField(max_length=10, choices=TYPES, default='caution')
+    reservation = models.ForeignKey(
+        'Reservation', on_delete=models.PROTECT,
+        null=True, blank=True, related_name='paiements'
+    )
+    STATUTS = [
+        ('reussi', 'Réussi'),
+        ('echoue', 'Échoué'),
+    ]
+
+    utilisateur = models.ForeignKey(
+        Utilisateur, on_delete=models.PROTECT, related_name='paiements'
+    )
+    montant = models.IntegerField()
+    plateforme = models.CharField(max_length=20, choices=PLATEFORMES)
+    statut = models.CharField(max_length=10, choices=STATUTS, default='reussi')
+    id_transaction = models.CharField(
+        max_length=30, unique=True, default=generer_id_transaction, editable=False
+    )
+    date_heure = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.id_transaction} - {self.utilisateur} - {self.montant} FCFA ({self.statut})"
