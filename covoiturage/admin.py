@@ -3,6 +3,8 @@ from django.contrib.auth.admin import UserAdmin
 
 from .models import Paiement, Utilisateur, Trajet, Reservation, Voiture, ProfilChauffeur , Zone
 from .models import Signalement
+from .models import Notification, Avis
+
 
 admin.site.register(Trajet)
 admin.site.register(Reservation)
@@ -68,3 +70,15 @@ class PaiementAdmin(admin.ModelAdmin):
     list_display = ('id_transaction', 'utilisateur', 'montant', 'plateforme', 'statut', 'date_heure' , 'type')
     list_filter = ('plateforme', 'statut' , 'type')
     readonly_fields = ('id_transaction', 'date_heure')
+
+
+
+@admin.register(Notification)
+class NotificationAdmin(admin.ModelAdmin):
+    list_display = ('destinataire', 'type', 'message', 'lue', 'cree_le')
+    list_filter = ('type', 'lue')
+
+
+@admin.register(Avis)
+class AvisAdmin(admin.ModelAdmin):
+    list_display = ('reservation', 'note', 'commentaire', 'cree_le')

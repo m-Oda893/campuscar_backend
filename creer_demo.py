@@ -1,4 +1,4 @@
-from datetime import timedelta
+from datetime import timedelta, time
 from django.utils import timezone
 from covoiturage.models import (
     Utilisateur, ProfilChauffeur, Voiture, Trajet, Reservation, Avis, Notification,
@@ -52,6 +52,8 @@ def voiture(proprietaire, matricule, marque, modele, couleur, places):
 
 def trajet(chauffeur, voit, depart, arrivee, date, heure, prix, places, statut='ouvert'):
     d, a = trouver_zone(depart), trouver_zone(arrivee)
+    if isinstance(heure, tuple):
+        heure = time(*heure)   # (7, 30) -> 07:30
     return Trajet.objects.create(
         chauffeur=chauffeur, voiture=voit, depart=depart, arrivee=arrivee,
         depart_lat=d.latitude if d else None, depart_lng=d.longitude if d else None,
@@ -67,11 +69,11 @@ def reservation(t, passager, statut):
 
 # 3. Comptes (même mot de passe pour tous, affiché à la fin)
 # Si ton écran de connexion refuse ces emails, adapte-les au format que tu acceptes
-mamadou = utilisateur('demo_chauffeur', 'Mamadou', 'Diop', '770000001', 'mamadou.demo@ucad.sn')
-awa = utilisateur('demo_chauffeur2', 'Awa', 'Ba', '770000002', 'awa.demo@ucad.sn', compteur=1)
-fatou = utilisateur('demo_passager', 'Fatou', 'Ndiaye', '770000003', 'fatou.demo@ucad.sn')
-moussa = utilisateur('demo_passager2', 'Moussa', 'Sow', '770000004', 'moussa.demo@ucad.sn')
-ibrahima = utilisateur('demo_bloque', 'Ibrahima', 'Fall', '770000005', 'ibrahima.demo@ucad.sn', compteur=3)
+mamadou = utilisateur('demo_chauffeur', 'Mamadou', 'Diop', '770000001', 'mamadou.demo@ucad.edu.sn')
+awa = utilisateur('demo_chauffeur2', 'Awa', 'Ba', '770000002', 'awa.demo@ucad.edu.sn', compteur=1)
+fatou = utilisateur('demo_passager', 'Fatou', 'Ndiaye', '770000003', 'fatou.demo@ucad.edu.sn')
+moussa = utilisateur('demo_passager2', 'Moussa', 'Sow', '770000004', 'moussa.demo@ucad.edu.sn')
+ibrahima = utilisateur('demo_bloque', 'Ibrahima', 'Fall', '770000005', 'ibrahima.demo@ucad.edu.sn', compteur=3)
 
 chauffeur_verifie(mamadou, 'DEMO-0001')
 chauffeur_verifie(awa, 'DEMO-0002')

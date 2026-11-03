@@ -144,10 +144,10 @@ class Trajet(models.Model):
         return moment
 
     def annulation_tardive(self):
-        """Vrai si on est à moins de X heures du départ (ou après)."""
+        """Vrai seulement dans les X heures AVANT le départ."""
         delai = timedelta(hours=settings.DELAI_ANNULATION_TARDIVE_HEURES)
-        return timezone.now() >= self.moment_depart() - delai
-
+        depart = self.moment_depart()
+        return depart - delai <= timezone.now() < depart
     
     
     # Opérations du diagramme
