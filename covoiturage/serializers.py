@@ -1,12 +1,19 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
+from creer_demo import trajet
+
 from .models import Notification, Paiement, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture, Signalement
 from datetime import date
 from .matching import trouver_zone 
 from django.conf import settings
 import re
-from .models import Reservation
+from .models import Reservation , PointPassage, Zone
+import re
+from .outils import normaliser_telephone
+
+
+
 
 
 class InscriptionSerializer(serializers.ModelSerializer):
@@ -24,6 +31,19 @@ class InscriptionSerializer(serializers.ModelSerializer):
     def validate_password(self, value):
         password_validation.validate_password(value)
         return value
+
+
+    def validate_telephone(self, value):
+        n = normaliser_telephone(value)
+        if not re.fullmatch(r'7\d{8}', n):
+            raise serializers.ValidationError(
+                "Numéro invalide (9 chiffres commençant par 7)."
+            )
+        if Utilisateur.objects.filter(telephone=n).exists():
+            raise serializers.ValidationError("Ce numéro est déjà utilisé.")
+        return n
+
+
 
     def validate(self, data):
         if not data.get('email') and not data.get('identifiant'):
@@ -44,6 +64,8 @@ class InscriptionSerializer(serializers.ModelSerializer):
         user.set_password(password)
         user.save()
         return user
+
+    
 
 
 #UTILISATEUR
@@ -119,7 +141,6 @@ class VoitureSerializer(serializers.ModelSerializer):
 
 
 class VoiturePublicSerializer(serializers.ModelSerializer):
-    # Ce que les AUTRES voient : de quoi reconnaître la voiture, sans la plaque
     class Meta:
         model = Voiture
         fields = ['id', 'marque', 'modele', 'couleur']
@@ -137,6 +158,11 @@ class TrajetSerializer(serializers.ModelSerializer):
         queryset=Voiture.objects.all(), source='voiture', write_only=True
     )
     modifiable = serializers.SerializerMethodField()
+    etapes = serializers.ListField(
+        child=serializers.CharField(), write_only=True, required=False
+    )
+    points_passage = serializers.SerializerMethodField()
+    itineraire_points = serializers.SerializerMethodField()
 
     class Meta:
         model = Trajet
@@ -145,9 +171,78 @@ class TrajetSerializer(serializers.ModelSerializer):
             'depart', 'depart_lat', 'depart_lng',
             'arrivee', 'arrivee_lat', 'arrivee_lng', 'date_depart',
             'heure_depart', 'prix_par_place', 'places_dispo',
-            'statut', 'cree_le','modifiable'
+            'statut', 'cree_le', 'modifiable', 'etapes', 'points_passage', 'itineraire_points'
         ]
         read_only_fields = ['statut', 'cree_le']
+
+
+    def get_points_passage(self, trajet):
+        return [p.zone.nom for p in trajet.points_passage.select_related('zone')]
+
+    
+    def get_points_passage(self, trajet):
+        return [
+            p.zone.nom
+            for p in trajet.points_passage.select_related('zone')
+        ]
+
+    def get_itineraire_points(self, trajet):
+        points = []
+
+        # 1. Point de départ
+        points.append({
+            'type': 'depart',
+            'nom': trajet.depart,
+            'latitude': trajet.depart_lat,
+            'longitude': trajet.depart_lng,
+        })
+
+        # 2. Étapes intermédiaires
+        passages = trajet.points_passage.select_related('zone').all()
+
+        for passage in passages:
+            points.append({
+                'type': 'etape',
+                'nom': passage.zone.nom,
+                'latitude': passage.zone.latitude,
+                'longitude': passage.zone.longitude,
+            })
+
+        # 3. Point d'arrivée
+        points.append({
+            'type': 'arrivee',
+            'nom': trajet.arrivee,
+            'latitude': trajet.arrivee_lat,
+            'longitude': trajet.arrivee_lng,
+        })
+
+        return points
+
+    def get_modifiable(self, trajet):
+        request = self.context.get('request')
+        if request is None or request.user != trajet.chauffeur:
+            return False
+
+
+
+    def validate_etapes(self, value):
+        zones = list(Zone.objects.all())
+        resultat = []
+        for texte in value:
+            zone = trouver_zone(texte, zones)
+            if zone is None:
+                dispo = ', '.join(z.nom for z in zones)
+                raise serializers.ValidationError(
+                    f"Zone inconnue : {texte}. Zones disponibles : {dispo}."
+                )
+            resultat.append(zone)
+        return resultat
+
+    def _enregistrer_etapes(self, trajet, zones):
+        trajet.points_passage.all().delete()
+        for i, zone in enumerate(zones, start=1):
+            PointPassage.objects.create(trajet=trajet, zone=zone, ordre=i)
+
 
     def get_modifiable(self, trajet):
         # Seul le chauffeur du trajet peut le modifier
@@ -219,14 +314,19 @@ class TrajetSerializer(serializers.ModelSerializer):
                 donnees[f'{cote}_lng'] = zone.longitude if zone else None
 
     def create(self, validated_data):
+        etapes = validated_data.pop('etapes', [])
         self._remplir_coordonnees(validated_data)
-        return super().create(validated_data)
+        trajet = super().create(validated_data)
+        self._enregistrer_etapes(trajet, etapes)
+        return trajet
 
     def update(self, instance, validated_data):
-        # À la modification, on ne recalcule que ce qui a changé
+        etapes = validated_data.pop('etapes', None)
         self._remplir_coordonnees(validated_data)
-        return super().update(instance, validated_data)
-
+        trajet = super().update(instance, validated_data)
+        if etapes is not None:
+            self._enregistrer_etapes(trajet, etapes)
+        return trajet
     
 
 
@@ -242,6 +342,7 @@ class ReservationSerializer(serializers.ModelSerializer):
     peut_etre_notee = serializers.SerializerMethodField()
     deja_notee = serializers.SerializerMethodField()
     ma_note = serializers.SerializerMethodField()
+    
 
 
     class Meta:
@@ -303,7 +404,7 @@ class ReservationSerializer(serializers.ModelSerializer):
     paye = serializers.SerializerMethodField()
 
     def get_paye(self, obj):
-        return obj.paiements.filter(statut='reussi').exists()
+        return obj.paiements.filter(type='trajet', statut='reussi').exists()
 
 
 
@@ -327,23 +428,9 @@ class SignalementSerializer(serializers.ModelSerializer):
 
 #PAIEMENT 
 class PaiementSerializer(serializers.ModelSerializer):
-    # Sert à la simulation uniquement : validé, jamais stocké
-    numero = serializers.CharField(write_only=True)
-
     class Meta:
         model = Paiement
-        fields = ['id', 'plateforme', 'numero', 'type', 'reservation', 'montant',
+        fields = ['id', 'plateforme', 'type', 'reservation', 'montant',
                   'statut', 'id_transaction', 'date_heure']
         read_only_fields = ['id', 'type', 'reservation', 'montant', 'statut',
                             'id_transaction', 'date_heure']
-    def validate_numero(self, value):
-        value = value.replace(' ', '')
-        if not re.fullmatch(r'7\d{8}', value):
-            raise serializers.ValidationError(
-                "Numéro invalide (9 chiffres commençant par 7)."
-            )
-        return value
-
-    def create(self, validated_data):
-        validated_data.pop('numero')
-        return Paiement.objects.create(**validated_data)

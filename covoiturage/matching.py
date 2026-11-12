@@ -6,7 +6,7 @@ from datetime import datetime
 from .models import Zone
 
 SEUIL_KM = 3.0           # un point doit être à moins de 3 km du trajet
-FENETRE_HEURES = 1.0     # écart d'heure maximal accepté
+FENETRE_MINUTES = 20     # écart d'heure maximal accepté
 MARGE = 0.05             # le passager doit monter un peu avant de descendre
 
 
@@ -72,7 +72,7 @@ def evaluer(trajet, depart_txt, arrivee_txt, zone_dep, zone_arr, heure_voulue):
         h = trajet.heure_depart
         minutes = abs((h.hour * 60 + h.minute) - (heure_voulue.hour * 60 + heure_voulue.minute))
         ecart_h = minutes / 60
-        if ecart_h > FENETRE_HEURES:
+        if minutes > FENETRE_MINUTES:
             return None
 
     # 2. Géographie (si les coordonnées existent), sinon recherche par texte

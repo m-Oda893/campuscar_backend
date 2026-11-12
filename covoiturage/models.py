@@ -125,6 +125,21 @@ class Trajet(models.Model):
 
 
 
+    def save(self, *args, **kwargs):
+        # import ici pour éviter une boucle entre models.py et matching.py
+        from .matching import trouver_zone
+        if self.depart_lat is None or self.depart_lng is None:
+            zone = trouver_zone(self.depart)
+            if zone:
+                self.depart_lat, self.depart_lng = zone.latitude, zone.longitude
+        if self.arrivee_lat is None or self.arrivee_lng is None:
+            zone = trouver_zone(self.arrivee)
+            if zone:
+                self.arrivee_lat, self.arrivee_lng = zone.latitude, zone.longitude
+        super().save(*args, **kwargs)
+
+
+
     def libelle(self):
         """Texte court utilisé dans les notifications."""
         return f"{self.depart} → {self.arrivee} du {self.date_depart:%d/%m/%Y}"
@@ -180,6 +195,8 @@ class Trajet(models.Model):
                              f"{self.libelle()} a été annulé à moins de {heures} h du départ.")
                 else:
                     texte = f"Le chauffeur a annulé le trajet {self.libelle()}."
+                if r.rembourser():
+                    texte += " Ton paiement a été remboursé automatiquement."
                 notifications.append(Notification(
                     destinataire=r.passager, type='trajet_annule', message=texte,
                 ))
@@ -221,6 +238,21 @@ class Trajet(models.Model):
 
 
 
+class PointPassage(models.Model):
+    trajet = models.ForeignKey(
+        "Trajet", on_delete=models.CASCADE, related_name="points_passage"
+    )
+    zone = models.ForeignKey("Zone", on_delete=models.PROTECT)
+    ordre = models.PositiveSmallIntegerField()
+
+    class Meta:
+        ordering = ["ordre"]
+        unique_together = ("trajet", "ordre")
+
+    def __str__(self):
+        return f"{self.trajet_id} - étape {self.ordre} : {self.zone}"
+
+
 #RESERVATION
 class Reservation(models.Model):
     STATUTS = [
@@ -246,7 +278,7 @@ class Reservation(models.Model):
 
 
     class Meta:
-        ordering = ['-date_heure_reservation']  # les plus récentes d'abord
+        ordering = ['-id']  # les plus récentes d'abord
 
     def __str__(self):
         return f'{self.passager} -> {self.trajet} ({self.statut})'
@@ -273,7 +305,7 @@ class Reservation(models.Model):
             reservation.save()
             Notification.objects.create(
                 destinataire=reservation.passager, type='demande_confirmee',
-                message=f"Ta demande pour {trajet.libelle()} a été confirmée.",
+                message=f"Ta demande pour {trajet.libelle()} a été acceptée. Paie ta place pour la garantir, puis contacte le chauffeur sur WhatsApp pour le rendez-vous.",
             )
         # On recharge cet objet pour que la vue renvoie les valeurs à jour
         self.refresh_from_db()
@@ -296,6 +328,8 @@ class Reservation(models.Model):
                 self.trajet.save()
             self.statut = 'annulee'
             self.save()
+            if not tardive:
+                self.rembourser()   # annulation tardive : le paiement reste au chauffeur
             if tardive:
                 Utilisateur.objects.filter(pk=self.passager_id).update(
                     annulations_tardives=F('annulations_tardives') + 1
@@ -309,6 +343,22 @@ class Reservation(models.Model):
                 message=texte,
             )
 
+
+    def a_paye(self):
+        return self.paiements.filter(type='trajet', statut='reussi').exists()
+
+    def rembourser(self):
+        """Remboursement simulé du paiement du trajet (une seule fois)."""
+        if self.paiements.filter(type='remboursement').exists():
+            return None
+        original = self.paiements.filter(type='trajet', statut='reussi').first()
+        if original is None:
+            return None
+        return Paiement.objects.create(
+            utilisateur=self.passager, reservation=self, type='remboursement',
+            montant=original.montant, plateforme=original.plateforme,
+            statut='reussi',
+        )
 
     def calculer_montant(self):
         """Une place = le prix par place fixé par le chauffeur."""
@@ -461,8 +511,9 @@ class Paiement(models.Model):
     TYPES = [
         ('caution', 'Caution'),
         ('trajet', 'Trajet'),
+        ('remboursement', 'Remboursement'),
     ]
-    type = models.CharField(max_length=10, choices=TYPES, default='caution')
+    type = models.CharField(max_length=20, choices=TYPES, default='caution')
     reservation = models.ForeignKey(
         'Reservation', on_delete=models.PROTECT,
         null=True, blank=True, related_name='paiements'
@@ -485,3 +536,14 @@ class Paiement(models.Model):
 
     def __str__(self):
         return f"{self.id_transaction} - {self.utilisateur} - {self.montant} FCFA ({self.statut})"
+
+
+
+    
+    
+def cloturer_trajets_oublies():
+    """Termine les trajets que le chauffeur a oublié de clôturer."""
+    limite = timezone.now() - timedelta(hours=settings.DELAI_CLOTURE_AUTO_HEURES)
+    for trajet in Trajet.objects.filter(statut__in=['ouvert', 'complet']):
+        if trajet.moment_depart() <= limite:
+            trajet.terminer()

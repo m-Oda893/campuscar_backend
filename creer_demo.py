@@ -1,8 +1,12 @@
-from datetime import timedelta, time
+from datetime import timedelta
+from django.db.models import Q
 from django.utils import timezone
+from datetime import timedelta, time
 from covoiturage.models import (
-    Utilisateur, ProfilChauffeur, Voiture, Trajet, Reservation, Avis, Notification,
+    Utilisateur, ProfilChauffeur, Voiture, Trajet, Reservation, Avis,
+    Notification, Paiement,
 )
+
 from covoiturage.matching import trouver_zone
 
 MOT_DE_PASSE = "Demo1234!"
@@ -16,6 +20,11 @@ def jour(n):
 
 # 1. Nettoyage : on supprime seulement les données des comptes demo_
 demo = Utilisateur.objects.filter(username__startswith='demo_')
+# Les paiements de trajet sont protégés : on les supprime d'abord
+Paiement.objects.filter(
+    Q(reservation__trajet__chauffeur__in=demo) |
+    Q(reservation__passager__in=demo)
+).delete()
 Trajet.objects.filter(chauffeur__in=demo).delete()       # supprime aussi réservations et avis
 Reservation.objects.filter(passager__in=demo).delete()
 Notification.objects.filter(destinataire__in=demo).delete()

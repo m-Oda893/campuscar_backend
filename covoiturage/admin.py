@@ -4,16 +4,30 @@ from django.contrib.auth.admin import UserAdmin
 from .models import Paiement, Utilisateur, Trajet, Reservation, Voiture, ProfilChauffeur , Zone
 from .models import Signalement
 from .models import Notification, Avis
+from .models import PointPassage
 
 
-admin.site.register(Trajet)
 admin.site.register(Reservation)
 admin.site.register(Voiture)
+admin.site.register(PointPassage)
+
+
+class PointPassageInline(admin.TabularInline):
+    model = PointPassage
+    extra = 0
 
 
 fieldsets = UserAdmin.fieldsets + (
     ('CampusCar', {'fields': ('annulations_tardives',)}),
 )
+
+
+@admin.register(Trajet)
+class TrajetAdmin(admin.ModelAdmin):
+    inlines = [PointPassageInline]
+
+
+
 
 @admin.register(Utilisateur)
 class UtilisateurAdmin(UserAdmin):
@@ -82,3 +96,6 @@ class NotificationAdmin(admin.ModelAdmin):
 @admin.register(Avis)
 class AvisAdmin(admin.ModelAdmin):
     list_display = ('reservation', 'note', 'commentaire', 'cree_le')
+
+
+

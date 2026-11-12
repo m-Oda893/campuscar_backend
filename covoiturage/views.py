@@ -11,7 +11,8 @@ from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.parsers import FormParser, JSONParser, MultiPartParser
 from django.conf import settings
-
+import re
+from .outils import normaliser_telephone
 from .models import Utilisateur, Trajet , Reservation , Voiture , Notification , Signalement
 from .serializers import InscriptionSerializer, ReservationSerializer, UtilisateurSerializer, TrajetSerializer , VoitureSerializer
 from .serializers import InscriptionSerializer, UtilisateurSerializer , NotificationSerializer , SignalementSerializer , ProfilModificationSerializer
@@ -22,9 +23,18 @@ from .models import ProfilChauffeur
 from .serializers import ProfilChauffeurSerializer
 from .matching import evaluer, parser_heure, trouver_zone
 from .models import Zone
-from .models import Paiement
+from .models import Paiement , cloturer_trajets_oublies
 from .serializers import PaiementSerializer
 from django.shortcuts import get_object_or_404
+
+from types import SimpleNamespace
+
+
+def lire_point(lat, lng):
+    try:
+        return SimpleNamespace(latitude=float(lat), longitude=float(lng))
+    except (TypeError, ValueError):
+        return None
 
 
 
@@ -59,9 +69,12 @@ class ConnexionView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        user = Utilisateur.objects.filter(
-            Q(email__iexact=login) | Q(identifiant=login)
-        ).first()
+        telephone = normaliser_telephone(login)
+        filtre = Q(email__iexact=login) | Q(identifiant=login)
+        if re.fullmatch(r'7\d{8}', telephone):
+            filtre |= Q(telephone=telephone)
+        user = Utilisateur.objects.filter(filtre).first()
+
 
         if user is None or not user.check_password(password) or not user.is_active:
             return Response(
@@ -110,14 +123,28 @@ class TrajetCreerView(generics.CreateAPIView):
     permission_classes = [permissions.IsAuthenticated]  # refuse si pas connecté
 
     def perform_create(self, serializer):
-        def a_paye_caution(user):
-           return user.paiements.filter(statut='reussi', type='caution').exists()
-        if self.request.user.est_suspendu:
+        user = self.request.user
+        if user.est_suspendu:
             raise PermissionDenied(MESSAGE_SUSPENSION)
-        if not self.request.user.est_chauffeur_verifie:
+        if not user.est_chauffeur_verifie:
             raise PermissionDenied("Ton permis doit être vérifié avant de publier un trajet.")
-        # Le chauffeur est l'utilisateur connecté
-        serializer.save(chauffeur=self.request.user)
+
+        # Termine automatiquement les trajets que le chauffeur a oublié de clôturer
+        cloturer_trajets_oublies()
+
+        maintenant = timezone.localtime()
+        a_terminer = Trajet.objects.filter(
+            chauffeur=user, statut__in=['ouvert', 'complet']
+        ).filter(
+            Q(date_depart__lt=maintenant.date()) |
+            Q(date_depart=maintenant.date(), heure_depart__lte=maintenant.time())
+        ).first()
+        if a_terminer:
+            raise PermissionDenied(
+                f"Termine ou annule d'abord ton trajet {a_terminer.libelle()}."
+            )
+
+        serializer.save(chauffeur=user)
 
 
 class TrajetRechercheView(generics.ListAPIView):
@@ -150,6 +177,17 @@ class TrajetRechercheView(generics.ListAPIView):
         zones = list(Zone.objects.all())
         zone_dep = trouver_zone(depart, zones)
         zone_arr = trouver_zone(arrivee, zones)
+        # Un point choisi sur la carte est prioritaire sur le texte
+        point_dep = lire_point(request.query_params.get('depart_lat'),
+                               request.query_params.get('depart_lng'))
+        point_arr = lire_point(request.query_params.get('arrivee_lat'),
+                               request.query_params.get('arrivee_lng'))
+        if point_dep:
+            zone_dep = point_dep
+            depart = depart or 'point choisi'
+        if point_arr:
+            zone_arr = point_arr
+            arrivee = arrivee or 'point choisi'
 
         retenus = []
         for trajet in self.get_queryset():
@@ -496,7 +534,8 @@ class ProfilChauffeurView(APIView):
         return Response({**serializer.data, 'statut': 'en_attente'}, status=201)
 
 
-    #DÉCONNEXION
+
+ #DÉCONNEXION
 class DeconnexionView(APIView):
     """Supprime le token : il ne peut plus servir, même s'il a été copié."""
     authentication_classes = [TokenAuthentication]
@@ -597,20 +636,21 @@ class ZoneListeView(APIView):
 
     def get(self, request):
         zones = Zone.objects.order_by('nom')
+
         return Response([
             {
                 'nom': z.nom,
                 'alias': [a.strip() for a in z.alias.split(',') if a.strip()],
+                'latitude': z.latitude,
+                'longitude': z.longitude,
             }
             for z in zones
         ])
-
-
     
 #PAIEMENTS
 
 def a_paye_caution(user):
-    return user.paiements.filter(statut='reussi').exists()
+       return user.paiements.filter(statut='reussi', type='caution').exists()
 
 
 class PaiementCautionView(APIView):
@@ -652,10 +692,10 @@ class PaiementReservationView(APIView):
         if reservation.statut != 'confirmee':
             return Response({'detail': "La réservation n'est pas confirmée."},
                             status=status.HTTP_400_BAD_REQUEST)
-        if reservation.trajet.statut != 'termine':
-            return Response({'detail': "Le trajet n'est pas encore terminé."},
+        if reservation.trajet.statut in ('termine', 'annule'):
+            return Response({'detail': "Ce trajet n'accepte plus de paiement."},
                             status=status.HTTP_400_BAD_REQUEST)
-        if reservation.paiements.filter(statut='reussi').exists():
+        if reservation.paiements.filter(type='trajet', statut='reussi').exists():
             return Response({'detail': "Cette réservation est déjà payée."},
                             status=status.HTTP_400_BAD_REQUEST)
 

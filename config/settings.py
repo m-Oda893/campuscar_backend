@@ -150,9 +150,10 @@ AUTH_USER_MODEL = 'covoiturage.Utilisateur'
 
 PRIX_MIN_PAR_PLACE = 500
 PRIX_MAX_PAR_PLACE = 1500
-CAUTION_MONTANT = 3000  # à remplacer par la valeur que tu choisis
+CAUTION_MONTANT = 3000 
 
 
 # Annulation tardive : délai (en heures avant le départ) et seuil de suspension
-DELAI_ANNULATION_TARDIVE_HEURES = 2
+DELAI_ANNULATION_TARDIVE_HEURES = 3
 SEUIL_SUSPENSION_ANNULATIONS = 3
+DELAI_CLOTURE_AUTO_HEURES = 4  # un trajet oublié est terminé automatiquement après ce délai
