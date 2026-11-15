@@ -411,20 +411,44 @@ class ReservationRefuserView(APIView):
         return Response(ReservationSerializer(reservation, context={'request': request}).data)
 
 
+
 class ReservationAnnulerView(APIView):
     authentication_classes = [TokenAuthentication]
     permission_classes = [IsAuthenticated]
 
     def post(self, request, pk):
         reservation = get_object_or_404(Reservation, pk=pk)
-        # Seul le passager qui a réservé peut annuler
+
         if reservation.passager != request.user:
             return Response({'detail': "Action non autorisée."}, status=403)
+
+        # Vérifier si un remboursement existait déjà
+        remboursement_avant = reservation.paiements.filter(
+            type='remboursement',
+            statut='reussi'
+        ).exists()
+
         try:
             reservation.annuler()
         except ValueError as erreur:
             return Response({'detail': str(erreur)}, status=400)
-        return Response(ReservationSerializer(reservation, context={'request': request}).data)
+
+        donnees = ReservationSerializer(
+            reservation,
+            context={'request': request}
+        ).data
+
+        # Vérifier si cette annulation a créé un remboursement
+        remboursement_apres = reservation.paiements.filter(
+            type='remboursement',
+            statut='reussi'
+        ).exists()
+
+        donnees['remboursement_effectue'] = (
+            remboursement_apres and not remboursement_avant
+        )
+
+        return Response(donnees)
 
 
 class ReservationNoterView(APIView):

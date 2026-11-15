@@ -14,6 +14,11 @@ ZONES = [
     ("Castor", "khar yalla , zone de captage , grand yoff", 14.7245899, -17.4540061),
     ("Guediawaye", "guediawaye,malika", 14.7676938, -17.3717578),
     ("Plateau", "dakar plateau, sandaga", 14.6776122, -17.4484715),
+    ("Ngor-Almadies", "ngor, almadies, virage, route des almadies", 14.7424598, -17.5341168),
+    ("Ouakam-Mamelles", "ouakam, mamelles, monument de la renaissance, cite asecna", 14.7216118, -17.5132931),
+    ("Hann-Maristes", "hann, hann maristes, cite des enseignants, dalifort", 14.7370345, -17.4317462),
+    ("Bargny", "bargny, sendou, minam, cite sipres", 14.696867, -17.2517522),
+    ("Diamniadio", "diamniadio, sphere ministerielle, cicad, gare ter diamniadio", 14.692943, -17.3509416),
     
     
 ]

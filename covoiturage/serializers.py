@@ -1,19 +1,27 @@
 from django.contrib.auth import password_validation
 from rest_framework import serializers
 
-from creer_demo import trajet
-
 from .models import Notification, Paiement, ProfilChauffeur, Reservation, Utilisateur, Trajet, Voiture, Signalement
-from datetime import date
-from .matching import trouver_zone 
+from datetime import date, datetime, timedelta
+from .matching import trouver_zone
 from django.conf import settings
 import re
-from .models import Reservation , PointPassage, Zone
-import re
+from .models import PointPassage, Zone
 from .outils import normaliser_telephone
 
+# Mot qui permet de reconnaître UCAD dans le nom d'une zone
+# (même valeur que kMotUcad dans l'appli Flutter)
+MOT_UCAD = 'ucad'
 
 
+def est_ucad(texte):
+    # On passe d'abord par la zone officielle (si le texte en désigne une),
+    # sinon on regarde le texte tel quel
+    if not texte:
+        return False
+    zone = trouver_zone(texte)
+    nom = zone.nom if zone else texte
+    return MOT_UCAD in nom.lower()
 
 
 class InscriptionSerializer(serializers.ModelSerializer):
@@ -177,10 +185,6 @@ class TrajetSerializer(serializers.ModelSerializer):
 
 
     def get_points_passage(self, trajet):
-        return [p.zone.nom for p in trajet.points_passage.select_related('zone')]
-
-    
-    def get_points_passage(self, trajet):
         return [
             p.zone.nom
             for p in trajet.points_passage.select_related('zone')
@@ -217,13 +221,6 @@ class TrajetSerializer(serializers.ModelSerializer):
         })
 
         return points
-
-    def get_modifiable(self, trajet):
-        request = self.context.get('request')
-        if request is None or request.user != trajet.chauffeur:
-            return False
-
-
 
     def validate_etapes(self, value):
         zones = list(Zone.objects.all())
@@ -299,10 +296,41 @@ class TrajetSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     {'places_dispo': f"Cette voiture a {voiture.nbre_place} place(s) passager au maximum."}
                 )
+
+        # Règle 3 (encadreur) : UCAD doit être le départ OU l'arrivée
+        # (jamais les deux, jamais aucun des deux).
+        # À la modification, un champ absent = on garde la valeur actuelle.
+        depart = data.get('depart', self.instance.depart if self.instance else None)
+        arrivee = data.get('arrivee', self.instance.arrivee if self.instance else None)
+        if depart is not None and arrivee is not None:
+            if est_ucad(depart) == est_ucad(arrivee):
+                raise serializers.ValidationError(
+                    "Le départ ou l'arrivée doit être UCAD (mais pas les deux)."
+                )
+
+        # Règle 4 : un chauffeur ne publie pas deux trajets trop proches dans le temps
+        # (même jour ou veille/lendemain proche), quelles que soient les zones.
+        # À la modification, un champ absent = on garde la valeur actuelle.
+        chauffeur = self.instance.chauffeur if self.instance else request.user
+        jour = data.get('date_depart', self.instance.date_depart if self.instance else None)
+        heure = data.get('heure_depart', self.instance.heure_depart if self.instance else None)
+        if jour is not None and heure is not None:
+            heures = getattr(settings, 'DELAI_MIN_ENTRE_TRAJETS_HEURES', 2)
+            ecart = timedelta(hours=heures)
+            moment = datetime.combine(jour, heure)
+            autres = Trajet.objects.filter(
+                chauffeur=chauffeur, statut__in=['ouvert', 'complet'],
+                date_depart__range=(jour - timedelta(days=1), jour + timedelta(days=1)),
+            )
+            if self.instance:
+                autres = autres.exclude(pk=self.instance.pk)  # on ne se compare pas à soi-même
+            for autre in autres:
+                if abs(datetime.combine(autre.date_depart, autre.heure_depart) - moment) < ecart:
+                    raise serializers.ValidationError(
+                        f"Tu as déjà un trajet ({autre.libelle()} à {autre.heure_depart:%H:%M}) "
+                        f"à moins de {heures} h de celui-ci."
+                    )
         return data
-
-
-    
 
 
     def _remplir_coordonnees(self, donnees):
